@@ -66,50 +66,68 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 			isDeleteWorkerNodeMachine bool
 		)
 
+		BeforeEach(func() {
+			isDeleteWorkerNodeMachine = true
+			workerNodeMachine, masterNodeMachine = createWorkerMachine(workerNodeMachineName), createMachine(masterNodeMachineName)
+			workerNode, masterNode, phantomNode =
+				createNodeWithMachine(workerNodeName, workerNodeMachine),
+				createNodeWithMachine(masterNodeName, masterNodeMachine),
+				createNode(noneExistingNodeName)
+
+			Expect(k8sClient.Create(context.Background(), masterNode)).ToNot(HaveOccurred())
+			Expect(k8sClient.Create(context.Background(), workerNode)).ToNot(HaveOccurred())
+			Expect(k8sClient.Create(context.Background(), masterNodeMachine)).ToNot(HaveOccurred())
+			Expect(k8sClient.Create(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			Expect(k8sClient.Delete(context.Background(), masterNode)).ToNot(HaveOccurred())
+			Expect(k8sClient.Delete(context.Background(), workerNode)).ToNot(HaveOccurred())
+			Expect(k8sClient.Delete(context.Background(), masterNodeMachine)).ToNot(HaveOccurred())
+			Expect(k8sClient.Delete(context.Background(), underTest)).ToNot(HaveOccurred())
+			if isDeleteWorkerNodeMachine {
+				Expect(k8sClient.Delete(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
+			}
+		})
+
 		Context("Sunny Flows", func() {
 			When("remediation does not exist", func() {
-				It("No machine is deleted", func() {
-					verifyMachineNotDeleted(workerNodeMachineName)
-					verifyMachineNotDeleted(masterNodeMachineName)
-				})
 				BeforeEach(func() {
 					underTest = createRemediation(phantomNode)
 				})
 
-			})
-
-			When("remediation associated machine has no owner ref", func() {
 				It("No machine is deleted", func() {
 					verifyMachineNotDeleted(workerNodeMachineName)
 					verifyMachineNotDeleted(masterNodeMachineName)
 				})
+			})
 
+			When("remediation associated machine has no owner ref", func() {
 				BeforeEach(func() {
 					underTest = createRemediation(masterNode)
 				})
 
-			})
-
-			When("remediation associated machine has owner ref without controller", func() {
 				It("No machine is deleted", func() {
 					verifyMachineNotDeleted(workerNodeMachineName)
 					verifyMachineNotDeleted(masterNodeMachineName)
 				})
+			})
 
+			When("remediation associated machine has owner ref without controller", func() {
 				BeforeEach(func() {
 					workerNodeMachine.OwnerReferences[0].Controller = nil
 					Expect(k8sClient.Update(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
 					underTest = createRemediation(workerNode)
 				})
 
-			})
-
-			When("remediation associated machine has owner ref with controller set to false", func() {
 				It("No machine is deleted", func() {
 					verifyMachineNotDeleted(workerNodeMachineName)
 					verifyMachineNotDeleted(masterNodeMachineName)
 				})
 
+			})
+
+			When("remediation associated machine has owner ref with controller set to false", func() {
 				BeforeEach(func() {
 					controllerValue := false
 					workerNodeMachine.OwnerReferences[0].Controller = &controllerValue
@@ -117,17 +135,22 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 					underTest = createRemediation(workerNode)
 				})
 
-			})
-
-			When("worker node remediation exist", func() {
-				It("worker machine is deleted", func() {
-					verifyMachineIsDeleted(workerNodeMachineName)
+				It("No machine is deleted", func() {
+					verifyMachineNotDeleted(workerNodeMachineName)
 					verifyMachineNotDeleted(masterNodeMachineName)
 				})
 
+			})
+
+			When("worker node remediation exist", func() {
 				BeforeEach(func() {
 					isDeleteWorkerNodeMachine = false
 					underTest = createRemediation(workerNode)
+				})
+
+				It("worker machine is deleted", func() {
+					verifyMachineIsDeleted(workerNodeMachineName)
+					verifyMachineNotDeleted(masterNodeMachineName)
 				})
 			})
 
@@ -243,38 +266,18 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 			})
 
 		})
-
-		BeforeEach(func() {
-			isDeleteWorkerNodeMachine = true
-			workerNodeMachine, masterNodeMachine = createWorkerMachine(workerNodeMachineName), createMachine(masterNodeMachineName)
-			workerNode, masterNode, phantomNode = createNodeWithMachine(workerNodeName, workerNodeMachine), createNodeWithMachine(masterNodeName, masterNodeMachine), createNode(noneExistingNodeName)
-
-			Expect(k8sClient.Create(context.Background(), masterNode)).ToNot(HaveOccurred())
-			Expect(k8sClient.Create(context.Background(), workerNode)).ToNot(HaveOccurred())
-			Expect(k8sClient.Create(context.Background(), masterNodeMachine)).ToNot(HaveOccurred())
-			Expect(k8sClient.Create(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
-		})
-
-		JustBeforeEach(func() {
-			Expect(k8sClient.Create(context.Background(), underTest)).ToNot(HaveOccurred())
-		})
-
-		AfterEach(func() {
-			Expect(k8sClient.Delete(context.Background(), masterNode)).ToNot(HaveOccurred())
-			Expect(k8sClient.Delete(context.Background(), workerNode)).ToNot(HaveOccurred())
-			Expect(k8sClient.Delete(context.Background(), masterNodeMachine)).ToNot(HaveOccurred())
-			Expect(k8sClient.Delete(context.Background(), underTest)).ToNot(HaveOccurred())
-			if isDeleteWorkerNodeMachine {
-				Expect(k8sClient.Delete(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
-			}
-		})
 	})
 })
 
 func createRemediation(node *v1.Node) *v1alpha1.MachineDeletionRemediation {
-	mdr := &v1alpha1.MachineDeletionRemediation{}
-	mdr.Name = node.Name
-	mdr.Namespace = defaultNamespace
+	mdr := &v1alpha1.MachineDeletionRemediation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      node.Name,
+			Namespace: defaultNamespace,
+		},
+	}
+
+	ExpectWithOffset(1, k8sClient.Create(context.Background(), mdr)).ToNot(HaveOccurred())
 	return mdr
 }
 
