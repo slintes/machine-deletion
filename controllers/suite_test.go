@@ -84,7 +84,7 @@ var _ = BeforeSuite(func() {
 
 	err = (&MachineDeletionRemediationReconciler{
 		Client: k8sManager.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("machine-deletion-controller"),
+		Log:    ctrl.Log.WithName("controllers").WithName("machine-deletion-remediation-controller"),
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
