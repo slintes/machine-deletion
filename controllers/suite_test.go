@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 
 	"github.com/medik8s/machine-deletion-remediation/api/v1alpha1"
+	"github.com/medik8s/machine-deletion-remediation/utils"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -45,6 +47,8 @@ var (
 	testEnv   *envtest.Environment
 	ctx       context.Context
 	cancel    context.CancelFunc
+	SpyLogger *utils.TestLogger
+	MDR       MachineDeletionRemediationReconciler
 )
 
 func TestAPIs(t *testing.T) {
@@ -82,9 +86,14 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
+	SpyLogger = &utils.TestLogger{
+		Output: make([]string, 1),
+		R:      logr.RuntimeInfo{CallDepth: 1}}
+	logger := logr.New(SpyLogger)
+
 	err = (&MachineDeletionRemediationReconciler{
 		Client: k8sManager.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("machine-deletion-remediation-controller"),
+		Log:    logger.WithName("controllers").WithName("machine-deletion-remediation-controller"),
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

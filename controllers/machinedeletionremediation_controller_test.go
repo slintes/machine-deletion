@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,9 +10,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -63,11 +59,11 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 
 	Context("Reconciliation", func() {
 		var (
-			isDeleteWorkerNodeMachine bool
+			deleteWorkerMachineAfterTest bool
 		)
 
 		BeforeEach(func() {
-			isDeleteWorkerNodeMachine = true
+			deleteWorkerMachineAfterTest = true
 			workerNodeMachine, masterNodeMachine = createWorkerMachine(workerNodeMachineName), createMachine(masterNodeMachineName)
 			workerNode, masterNode, phantomNode =
 				createNodeWithMachine(workerNodeName, workerNodeMachine),
@@ -85,7 +81,7 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 			Expect(k8sClient.Delete(context.Background(), workerNode)).ToNot(HaveOccurred())
 			Expect(k8sClient.Delete(context.Background(), masterNodeMachine)).ToNot(HaveOccurred())
 			Expect(k8sClient.Delete(context.Background(), underTest)).ToNot(HaveOccurred())
-			if isDeleteWorkerNodeMachine {
+			if deleteWorkerMachineAfterTest {
 				Expect(k8sClient.Delete(context.Background(), workerNodeMachine)).ToNot(HaveOccurred())
 			}
 		})
@@ -144,7 +140,7 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 
 			When("worker node remediation exist", func() {
 				BeforeEach(func() {
-					isDeleteWorkerNodeMachine = false
+					deleteWorkerMachineAfterTest = false
 					underTest = createRemediation(workerNode)
 				})
 
@@ -161,6 +157,15 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 				reconcileRequest reconcile.Request
 				reconciler       MachineDeletionRemediationReconciler
 			)
+
+			//BeforeEach(func() {
+			//reconciler = MachineDeletionRemediationReconciler{Client: k8sClient, Log: controllerruntime.Log, Scheme: scheme.Scheme}
+			//})
+
+			//JustBeforeEach(func() {
+			//reconcileRequest = controllerruntime.Request{NamespacedName: types.NamespacedName{Name: underTest.Name, Namespace: defaultNamespace}}
+			//})
+
 			When("remediation is not connected to a node", func() {
 				It("node not found error", func() {
 					Eventually(func() bool {
@@ -241,28 +246,18 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 			})
 
 			When("machine associated to worker node fails deletion", func() {
-				It("returns the same delete failure error", func() {
-					Skip("Test affected by too many timeouts, skipping it until reworked")
-					Eventually(func() bool {
-						_ = k8sClient.Create(context.Background(), workerNodeMachine) //make sure worker machine will exist - it may be deleted by first run
-						_, reconcileError = reconciler.Reconcile(context.Background(), reconcileRequest)
-						return reconcileError != nil && reconcileError.Error() == mockDeleteFailMessage
-					}, 10*time.Second, 1*time.Second).Should(BeTrue())
-				})
-
 				BeforeEach(func() {
-					underTest = createRemediation(workerNode)
-					reconciler = MachineDeletionRemediationReconciler{Client: deleteFailClient{k8sClient}, Log: controllerruntime.Log, Scheme: scheme.Scheme}
-					isDeleteWorkerNodeMachine = false //Reconcile runs twice, first time is initiated automatically by Ginkgo framework without fake client - the machine is deleted than
+					underTest = createRemediation(phantomNode)
+					//reconciler = MachineDeletionRemediationReconciler{Client: deleteFailClient{k8sClient}, Log: controllerruntime.Log, Scheme: scheme.Scheme}
+					//isDeleteWorkerNodeMachine = false //Reconcile runs twice, first time is initiated automatically by Ginkgo framework without fake client - the machine is deleted than
 				})
-			})
 
-			BeforeEach(func() {
-				reconciler = MachineDeletionRemediationReconciler{Client: k8sClient, Log: controllerruntime.Log, Scheme: scheme.Scheme}
-			})
+				It("returns the same delete failure error", func() {
+					GinkgoWriter.Printf("SpyLogger output: %v\n", SpyLogger.Output)
+					Expect(false).To(BeTrue())
+					deleteWorkerMachineAfterTest = false
+				})
 
-			JustBeforeEach(func() {
-				reconcileRequest = controllerruntime.Request{NamespacedName: types.NamespacedName{Name: underTest.Name, Namespace: defaultNamespace}}
 			})
 
 		})
@@ -317,6 +312,13 @@ func createWorkerMachine(machineName string) *v1beta1.Machine {
 }
 
 func verifyMachineNotDeleted(machineName string) {
+	Consistently(
+		func() error {
+			return k8sClient.Get(context.Background(), client.ObjectKey{Namespace: defaultNamespace, Name: machineName}, createDummyMachine())
+		}).ShouldNot(HaveOccurred())
+}
+
+func verifyMachineExists(machineName string) {
 	Consistently(
 		func() error {
 			return k8sClient.Get(context.Background(), client.ObjectKey{Namespace: defaultNamespace, Name: machineName}, createDummyMachine())
