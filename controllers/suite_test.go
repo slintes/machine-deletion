@@ -19,9 +19,9 @@ package controllers
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -35,7 +35,6 @@ import (
 	"github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 
 	"github.com/medik8s/machine-deletion-remediation/api/v1alpha1"
-	"github.com/medik8s/machine-deletion-remediation/utils"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -47,9 +46,42 @@ var (
 	testEnv   *envtest.Environment
 	ctx       context.Context
 	cancel    context.CancelFunc
-	SpyLogger *utils.TestLogger
-	MDR       MachineDeletionRemediationReconciler
+	logs      *MyLogs
 )
+
+type MyLogs struct {
+	logs []string
+}
+
+func (l *MyLogs) Write(p []byte) (n int, err error) {
+	n, err = GinkgoWriter.Write(p)
+	if err != nil {
+		return n, err
+	}
+	l.logs = append(l.logs, string(p))
+	return
+}
+
+func (l *MyLogs) Contains(s string) bool {
+	for _, log := range l.logs {
+		if strings.Contains(log, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *MyLogs) Clear() {
+	l.logs = make([]string, 0)
+}
+
+func (l *MyLogs) Print() {
+	GinkgoWriter.Println("**************** PRINT LOGS START ********************")
+	for _, log := range l.logs {
+		GinkgoWriter.Println(log)
+	}
+	GinkgoWriter.Println("**************** PRINT LOGS END ********************")
+}
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -58,7 +90,9 @@ func TestAPIs(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	logs = &MyLogs{logs: make([]string, 0)}
+	logf.SetLogger(zap.New(zap.WriteTo(logs), zap.UseDevMode(true)))
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
@@ -86,14 +120,9 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	SpyLogger = &utils.TestLogger{
-		Output: make([]string, 1),
-		R:      logr.RuntimeInfo{CallDepth: 1}}
-	logger := logr.New(SpyLogger)
-
 	err = (&MachineDeletionRemediationReconciler{
 		Client: k8sManager.GetClient(),
-		Log:    logger.WithName("controllers").WithName("machine-deletion-remediation-controller"),
+		Log:    ctrl.Log.WithName("controllers").WithName("machine-deletion-remediation-controller"),
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

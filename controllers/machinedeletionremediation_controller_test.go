@@ -63,6 +63,7 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 		)
 
 		BeforeEach(func() {
+			logs.Clear()
 			deleteWorkerMachineAfterTest = true
 			workerNodeMachine, masterNodeMachine = createWorkerMachine(workerNodeMachineName), createMachine(masterNodeMachineName)
 			workerNode, masterNode, phantomNode =
@@ -247,17 +248,19 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 
 			When("machine associated to worker node fails deletion", func() {
 				BeforeEach(func() {
-					underTest = createRemediation(phantomNode)
-					//reconciler = MachineDeletionRemediationReconciler{Client: deleteFailClient{k8sClient}, Log: controllerruntime.Log, Scheme: scheme.Scheme}
-					//isDeleteWorkerNodeMachine = false //Reconcile runs twice, first time is initiated automatically by Ginkgo framework without fake client - the machine is deleted than
+					// trigger delete error in reconcile
+					workerNodeMachine.Finalizers = append(workerNodeMachine.Finalizers, "test")
+					Expect(k8sClient.Update(context.Background(), workerNodeMachine)).To(Succeed())
+					underTest = createRemediation(workerNode)
 				})
 
 				It("returns the same delete failure error", func() {
-					GinkgoWriter.Printf("SpyLogger output: %v\n", SpyLogger.Output)
-					Expect(false).To(BeTrue())
+					Eventually(func() bool {
+						//logs.Print()
+						return logs.Contains("node-associated machine was not deleted yet, probably due to a finalizer on the machine")
+					}).Should(BeTrue())
 					deleteWorkerMachineAfterTest = false
 				})
-
 			})
 
 		})
