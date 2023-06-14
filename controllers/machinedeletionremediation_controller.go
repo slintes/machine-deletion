@@ -95,65 +95,55 @@ func (r *MachineDeletionRemediationReconciler) Reconcile(ctx context.Context, re
 	// Get Machine's Name and Namespace to retrive it from the cluster
 	var (
 		machineName, machineNamespace string
-		gotMachineFromNode            bool
 	)
 
-	if remediation.GetAnnotations() != nil {
-		if machineNameNamespace, exists := remediation.GetAnnotations()[MachineNameNamespaceAnnotation]; exists {
-			if machineName, machineNamespace, err = extractNameAndNamespace(machineNameNamespace, remediation.GetName()); err != nil {
-				log.Error(err, "could not get Machine data from remediation", "remediation", remediation.GetName(), "annotation", machineNameNamespace)
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
+	if machineName, machineNamespace, err = getNameNsFromAnnotation(remediation); err != nil {
+		log.Error(err, "could not get Machine data from remediation", "remediation", remediation.GetName(), "annotations", fmt.Sprintf("%+v", remediation.GetAnnotations()))
+		// no one will fix the annotation, no need to return the error
+		return ctrl.Result{}, nil
+	} else if machineName == "" {
 		if node, err := r.getNodeFromMdr(remediation); err != nil {
+			// TODO check node not found! The node will never occur, so no need for returning an error
 			return ctrl.Result{}, err
 		} else if machineName, machineNamespace, err = r.getMachineNameNamespaceFromNode(node); err != nil {
+			// TODO return the error?
 			return ctrl.Result{}, err
 		}
-
 		if err = r.setDeletedMachineAnnotation(ctx, remediation, machineName, machineNamespace); err != nil {
 			return ctrl.Result{}, errors.Wrapf(err, "failed to update remediation CR with timeout annotation")
 		}
-		gotMachineFromNode = true
 	}
 
 	var machine *unstructured.Unstructured
-	if machine, err = r.getMachine(machineName, machineNamespace); err != nil {
-		if apiErrors.IsNotFound(err) && !gotMachineFromNode {
-			log.Info(successfulMachineDeletionInfo, "node", remediation.Name, "machine", machineName)
-			return ctrl.Result{}, nil
+	if machine, err = r.getMachine(machineName, machineNamespace); err == nil {
+		// delete machine if not done yet, and when it is controlled
+		if machine.GetDeletionTimestamp() == nil {
+			if !hasControllerOwner(machine) {
+				log.Info("ignoring remediation of node-associated machine: the machine has no controller owner", "machine", machine.GetName(), "node name", remediation.Name)
+				return ctrl.Result{}, nil
+			}
+			err = r.deleteMachineOfNode(ctx, machine, remediation.Name)
+			log.Info("node-associated machine deletion request", "node", remediation.Name, "machine", machineName)
+			return ctrl.Result{Requeue: true}, err
 		}
-		// If Machine's name and namespace come from a Node, the Machine should still exists
-		log.Error(err, noMachineFoundError, "node", remediation.Name, "machine", machineName)
-		return ctrl.Result{}, err
-	}
-
-	if machine.GetDeletionTimestamp() != nil {
+		// machine deletion requested, but machine still exists
 		machinePhase, err := getMachineStatusPhase(machine)
 		if err != nil {
 			r.Log.Error(err, "could not get machine's phase")
 			machinePhase = "unknown"
 		}
-
+		// TODO stop after some time with requeue...?
 		log.Info(postponedMachineDeletionInfo, "node", remediation.Name, "machine", machineName, "machine status.phase", machinePhase)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-	log.Info("node-associated machine found", "node", remediation.Name, "machine", machineName)
-
-	if !hasControllerOwner(machine) {
-		log.Info("ignoring remediation of node-associated machine: the machine has no controller owner", "machine", machine.GetName(), "node name", remediation.Name)
-		return ctrl.Result{}, nil
-	}
-
-	log.Info("node-associated machine deletion request", "node", remediation.Name, "machine", machineName)
-	err = r.deleteMachineOfNode(ctx, machine, remediation.Name)
-	if err != nil {
+	if !apiErrors.IsNotFound(err) {
+		// unexpected error
+		log.Error(err, noMachineFoundError, "node", remediation.Name, "machine", machineName)
 		return ctrl.Result{}, err
 	}
-
-	// requeue immediately to check machine deletion progression
-	return ctrl.Result{Requeue: true}, nil
+	// machine deleted, done :)
+	log.Info(successfulMachineDeletionInfo, "node", remediation.Name, "machine", machineName)
+	return ctrl.Result{}, nil
 }
 
 func (r *MachineDeletionRemediationReconciler) deleteMachineOfNode(ctx context.Context, machine *unstructured.Unstructured, nodeName string) error {
@@ -277,4 +267,15 @@ func getMachineStatusPhase(machine *unstructured.Unstructured) (string, error) {
 		return "", fmt.Errorf("Machine object does not have a status.phase field")
 	}
 	return phase, nil
+}
+
+func getNameNsFromAnnotation(mdr *v1alpha1.MachineDeletionRemediation) (name, ns string, err error) {
+	if mdr.GetAnnotations() == nil {
+		return "", "", nil
+	}
+	if machineNameNamespace, exists := mdr.GetAnnotations()[MachineNameNamespaceAnnotation]; !exists {
+		return "", "", nil
+	} else {
+		return extractNameAndNamespace(machineNameNamespace, mdr.GetName())
+	}
 }

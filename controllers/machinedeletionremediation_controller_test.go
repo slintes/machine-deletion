@@ -201,7 +201,7 @@ var _ = Describe("Machine Deletion Remediation CR", func() {
 
 				It("failed to fetch machine error", func() {
 					Eventually(func() bool {
-						return plogs.Contains(noMachineFoundError)
+						return plogs.Contains(successfulMachineDeletionInfo)
 					}, 30*time.Second, 1*time.Second).Should(BeTrue())
 				})
 			})
